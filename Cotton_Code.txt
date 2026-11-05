@@ -1,0 +1,86 @@
+"""
+Code: Cotton bacterial blight severity classification (Low / Normal / High infection).
+
+Paper: A multispectral texture-feature machine learning framework for cotton
+bacterial blight severity classification.
+
+PIPELINE
+  CVIPtools (pre-processing, ROI extraction, 55 features; done in the CVIPtools GUI)
+  -> ARFF file -> Weka (CFS selection to 20 attributes, classifiers, 10-fold CV).
+
+DATA (raw data): Cotton_Balanced_900.csv / Cotton_Balanced_900.arff
+  16x16 ROI feature set, 2700 instances (900 per class), 19 numeric attributes
+  + class label "classes" (Lowinfection, Normalinfection, HighInfection).
+
+SOFTWARE: Weka 3.8.x (Java); Python 3.9+ with pandas, scikit-learn.
+  Weka packages needed for some classifiers: RotationForest, NNge, J48graft,
+  BFTree, Decorate.
+
+HOW TO RUN (put this file and the dataset in one folder)
+  1. Python check of the best model (Lazy.IB1, about 93%):
+       python Cotton_Code.py
+  2. Weka experiments (10-fold cross-validation, seed 1):
+       python Cotton_Code.py /path/to/weka.jar
+     Results are written to the "results" folder.
+"""
+import os
+import subprocess
+import sys
+
+import pandas as pd
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import MinMaxScaler
+
+CSV = "Cotton_Balanced_900.csv"
+ARFF = "Cotton_Balanced_900.arff"
+FOLDS, SEED = 10, 1
+
+WEKA_CLASSIFIERS = {
+    "Lazy.IB1": "weka.classifiers.lazy.IB1",
+    "Lazy.IBk": "weka.classifiers.lazy.IBk -K 1",
+    "Trees.RandomTree": "weka.classifiers.trees.RandomTree",
+    "Meta.RandomCommittee": "weka.classifiers.meta.RandomCommittee",
+    "Trees.RandomForest": "weka.classifiers.trees.RandomForest",
+    "Rules.NNge": "weka.classifiers.rules.NNge",
+    "Meta.RotationForest": "weka.classifiers.meta.RotationForest",
+    "Trees.J48": "weka.classifiers.trees.J48",
+    "Trees.J48graft": "weka.classifiers.trees.J48graft",
+    "Trees.BFTree": "weka.classifiers.trees.BFTree",
+    "Meta.Decorate": "weka.classifiers.meta.Decorate",
+    "Bayes.NaiveBayes": "weka.classifiers.bayes.NaiveBayes",
+    "Functions.MLP": "weka.classifiers.functions.MultilayerPerceptron",
+    # TODO (authors): add the 12th classifier and the CNN model from Table 4 /
+    # Figure 5 of the manuscript, with the exact settings used.
+}
+
+
+def verify_ib1():
+    df = pd.read_csv(CSV)
+    X, y = df.iloc[:, :-1], df["classes"]
+    labels = ["Lowinfection", "Normalinfection", "HighInfection"]
+    cv = StratifiedKFold(n_splits=FOLDS, shuffle=True, random_state=SEED)
+    model = make_pipeline(MinMaxScaler(), KNeighborsClassifier(1))
+    pred = cross_val_predict(model, X, y, cv=cv)
+    print("1-NN (IB1-like), 10-fold CV accuracy: %.2f%%" % (100 * accuracy_score(y, pred)))
+    print(confusion_matrix(y, pred, labels=labels))
+    print(classification_report(y, pred, labels=labels, digits=3))
+
+
+def run_weka(weka_jar):
+    os.makedirs("results", exist_ok=True)
+    for name, cls in WEKA_CLASSIFIERS.items():
+        print("Running", name)
+        cmd = ["java", "-cp", weka_jar] + cls.split() + ["-t", ARFF, "-x", str(FOLDS), "-s", str(SEED)]
+        with open(os.path.join("results", name + ".txt"), "w") as out:
+            subprocess.run(cmd, stdout=out, check=False)
+    print("Done. See the results folder.")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        run_weka(sys.argv[1])
+    else:
+        verify_ib1()
